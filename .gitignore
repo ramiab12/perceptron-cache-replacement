@@ -1,0 +1,137 @@
+# Binaries and executables
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+run_*
+spmv
+*.test
+
+# Go build artifacts
+*.o
+*.a
+*.so
+
+# Go module cache
+go.sum
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Dependency directories
+vendor/
+
+# Go workspace file
+go.work
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Log files and databases
+*.log
+*.sqlite3
+akita_sim*.sqlite3
+
+# Results and temporary files
+results/*.txt
+logs/*.log
+*.tmp
+*.temp
+
+# Backup files
+*.bak
+*.backup
+*~
+
+# Compiled Object files
+*.o
+*.obj
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Libraries
+*.lib
+*.a
+*.la
+*.lo
+
+# Shared objects (inc. Windows DLLs)
+*.dll
+*.so
+*.so.*
+*.dylib
+
+# Executables
+*.exe
+*.out
+*.app
+*.i*86
+*.x86_64
+*.hex
+
+# Debug files
+*.dSYM/
+*.su
+*.idb
+*.pdb
+
+# Kernel Module Compile Results
+*.mod*
+*.cmd
+.tmp_versions/
+modules.order
+Module.symvers
+Mkfile.old
+dkms.conf
+
+# MGPUSim specific
+*.trace
+*.mem
+*.cache
+profile.out
+
+# Test artifacts
+test_output/
+benchmark_results/
+
+# Local configuration files
+config.local.json
+*.local
+
+# Documentation build artifacts
+docs/_build/
+docs/build/
+
+# Python cache (if any Python scripts are added)
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
