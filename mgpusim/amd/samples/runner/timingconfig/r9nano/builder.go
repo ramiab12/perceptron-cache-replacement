@@ -65,7 +65,7 @@ func MakeBuilder() Builder {
 		freq:                           1 * sim.GHz,
 		numCUPerShaderArray:            4,
 		numShaderArray:                 16,
-		l2CacheSize:                    2 * mem.MB,
+		l2CacheSize:                    256 * mem.KB, // Reduced from 2MB to 256KB for more cache pressure
 		numMemoryBank:                  16,
 		log2CacheLineSize:              6,
 		log2PageSize:                   12,

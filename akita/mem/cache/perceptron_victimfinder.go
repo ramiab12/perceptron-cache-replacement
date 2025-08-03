@@ -18,9 +18,9 @@ type VictimContext struct {
 // Based on MICRO 2016 paper "Perceptron Learning for Reuse Prediction"
 // Uses address-as-PC-proxy since we don't have direct PC access in GPU
 type PerceptronVictimFinder struct {
-	// 6 feature tables with 256 entries each (as per MICRO 2016)
-	// Each entry contains 6-bit signed weights (-32 to +31)
-	featureTables [6][]int32
+	// 32 weights as used in earlier successful implementation
+	// Each weight is 6-bit signed (-32 to +31)
+	weights [32]int32
 
 	// Prediction threshold (τ from MICRO 2016)
 	// If sum >= threshold, predict no reuse (evict block)
@@ -33,25 +33,35 @@ type PerceptronVictimFinder struct {
 	// Learning rate for weight updates
 	learningRate int32
 
+	// Cache to store predictions for training feedback
+	// Maps address -> prediction made during FindVictimWithContext
+	predictionCache map[uint64]bool
+
 	// Statistics for monitoring
 	totalPredictions   int64
 	correctPredictions int64
 }
 
-// NewPerceptronVictimFinder creates a new perceptron victim finder
+// NewPerceptronVictimFinder creates a new perceptron victim finder with default parameters
 func NewPerceptronVictimFinder() *PerceptronVictimFinder {
+	return NewPerceptronVictimFinderWithParams(1, 8, 2) // Lowered theta from 32 to 8 (matching earlier implementation)
+}
+
+// NewPerceptronVictimFinderWithParams creates a perceptron with custom parameters
+func NewPerceptronVictimFinderWithParams(threshold, theta, learningRate int32) *PerceptronVictimFinder {
 	p := &PerceptronVictimFinder{
-		threshold:    3,  // τ = 3 (from MICRO 2016)
-		theta:        68, // θ = 68 (from MICRO 2016)
-		learningRate: 1,  // Conservative learning rate
+		threshold:       threshold,
+		theta:           theta,
+		learningRate:    learningRate,
+		predictionCache: make(map[uint64]bool),
 	}
 
-	// Initialize 6 feature tables with 256 entries each (as per MICRO 2016)
-	for i := 0; i < 6; i++ {
-		p.featureTables[i] = make([]int32, 256)
+	// Initialize 32 weights to 0 (matching earlier successful implementation)
+	for i := 0; i < 32; i++ {
+		p.weights[i] = 0
 	}
 
-	log.Printf("[PERCEPTRON] Initialized PerceptronVictimFinder: threshold=%d, theta=%d, learningRate=%d, tables=6x256",
+	log.Printf("[PERCEPTRON] Initialized PerceptronVictimFinder: threshold=%d, theta=%d, learningRate=%d, weights=32",
 		p.threshold, p.theta, p.learningRate)
 
 	return p
@@ -78,20 +88,20 @@ func (p *PerceptronVictimFinder) FindVictim(set *Set) *Block {
 
 // FindVictimWithContext implements perceptron-based victim selection
 func (p *PerceptronVictimFinder) FindVictimWithContext(set *Set, context *VictimContext) *Block {
-	// Extract features using address-as-PC-proxy
-	features := p.extractFeatures(context)
-
-	// Calculate prediction sum (yout)
-	sum := p.calculatePredictionSum(features, context.Address)
+	// Calculate prediction sum using direct PC and tag bits (like earlier implementation)
+	sum := p.calculatePredictionSum(context.Address)
 
 	// Make prediction: if sum >= threshold, predict no reuse (evict block)
 	// if sum < threshold, predict reuse (keep block)
 	predictNoReuse := sum >= p.threshold
 
+	// Store prediction for training feedback
+	p.predictionCache[context.Address] = predictNoReuse
+
 	// Debug logging every 100 predictions to see activity
 	if p.totalPredictions%100 == 0 {
-		log.Printf("[PERCEPTRON] Prediction #%d: addr=0x%x, features=%v, sum=%d, threshold=%d, predictNoReuse=%t",
-			p.totalPredictions, context.Address, features, sum, p.threshold, predictNoReuse)
+		log.Printf("[PERCEPTRON] Prediction #%d: addr=0x%x, sum=%d, threshold=%d, predictNoReuse=%t",
+			p.totalPredictions, context.Address, sum, p.threshold, predictNoReuse)
 	}
 
 	// Find best victim based on prediction
@@ -136,14 +146,24 @@ func (p *PerceptronVictimFinder) extractFeatures(context *VictimContext) [6]uint
 	return features
 }
 
-// calculatePredictionSum calculates the sum of weights from all feature tables
-// Uses hashing + XOR indexing as per MICRO 2016 paper
-func (p *PerceptronVictimFinder) calculatePredictionSum(features [6]uint32, addr uint64) int32 {
+// calculatePredictionSum calculates the sum using direct PC and tag bits (like earlier implementation)
+func (p *PerceptronVictimFinder) calculatePredictionSum(addr uint64) int32 {
 	sum := int32(0)
-	for i := 0; i < 6; i++ {
-		tableIndex := p.getTableIndex(features[i], addr)
-		sum += p.featureTables[i][tableIndex]
+
+	// Use direct PC bits (16 bits from address)
+	for i := 0; i < 16; i++ {
+		if (addr>>uint(i))&1 == 1 {
+			sum += p.weights[i]
+		}
 	}
+
+	// Use tag bits (16 bits from higher address bits)
+	for i := 0; i < 16; i++ {
+		if (addr>>uint(i+16))&1 == 1 {
+			sum += p.weights[i+16]
+		}
+	}
+
 	return sum
 }
 
@@ -195,45 +215,100 @@ func (p *PerceptronVictimFinder) selectVictim(set *Set, predictNoReuse bool) *Bl
 // Training methods
 
 // TrainOnHit trains the predictor when a block is hit (reused)
-func (p *PerceptronVictimFinder) TrainOnHit(features [6]uint32, addr uint64) {
-	// Log training activity occasionally
-	if p.totalPredictions%50 == 0 {
-		log.Printf("[PERCEPTRON] TrainOnHit: addr=0x%x, features=%v (block was reused)", addr, features)
+func (p *PerceptronVictimFinder) TrainOnHit(addr uint64) {
+	// Get the actual prediction we made for this address
+	predictedNoReuse, exists := p.predictionCache[addr]
+	if !exists {
+		// If no prediction cached, skip training (shouldn't happen in normal flow)
+		log.Printf("[PERCEPTRON] TrainOnHit: No prediction cached for addr=0x%x, cache size=%d", addr, len(p.predictionCache))
+		return
 	}
-	p.train(features, addr, false, true) // predicted no reuse, but actually reused
+
+	// Log training activity occasionally
+	if p.totalPredictions%10 == 0 {
+		log.Printf("[PERCEPTRON] TrainOnHit: addr=0x%x, predicted=%t, actual=true (reused)",
+			addr, predictedNoReuse)
+	}
+
+	// Train with actual prediction vs actual outcome
+	p.train(addr, predictedNoReuse, true) // actual = true (reused)
+
+	// Clean up prediction cache to prevent memory leak
+	delete(p.predictionCache, addr)
 }
 
 // TrainOnEviction trains the predictor when a block is evicted (not reused)
-func (p *PerceptronVictimFinder) TrainOnEviction(features [6]uint32, addr uint64) {
-	// Log training activity occasionally
-	if p.totalPredictions%50 == 0 {
-		log.Printf("[PERCEPTRON] TrainOnEviction: addr=0x%x, features=%v (block was NOT reused)", addr, features)
+func (p *PerceptronVictimFinder) TrainOnEviction(addr uint64) {
+	// Get the actual prediction we made for this address
+	predictedNoReuse, exists := p.predictionCache[addr]
+	if !exists {
+		// If no prediction cached, skip training (shouldn't happen in normal flow)
+		return
 	}
-	p.train(features, addr, true, false) // predicted reuse, but actually not reused
+
+	// Log training activity occasionally
+	if p.totalPredictions%10 == 0 {
+		log.Printf("[PERCEPTRON] TrainOnEviction: addr=0x%x, predicted=%t, actual=false (not reused)",
+			addr, predictedNoReuse)
+	}
+
+	// Train with actual prediction vs actual outcome
+	p.train(addr, predictedNoReuse, false) // actual = false (not reused)
+
+	// Clean up prediction cache to prevent memory leak
+	delete(p.predictionCache, addr)
 }
 
 // train implements the perceptron learning algorithm
-func (p *PerceptronVictimFinder) train(features [6]uint32, addr uint64, predicted bool, actual bool) {
+func (p *PerceptronVictimFinder) train(addr uint64, predictedNoReuse bool, actualReuse bool) {
 	// Calculate current prediction confidence
-	sum := p.calculatePredictionSum(features, addr)
+	sum := p.calculatePredictionSum(addr)
+
+	// Convert to consistent semantics: actualNoReuse = !actualReuse
+	actualNoReuse := !actualReuse
 
 	// Update weights if prediction was wrong or confidence is low
-	if predicted != actual || abs(sum) < p.theta {
-		for i := 0; i < 6; i++ {
-			tableIndex := p.getTableIndex(features[i], addr)
+	if predictedNoReuse != actualNoReuse || abs(sum) < p.theta {
+		// Update weights based on PC bits (16 bits from address)
+		for i := 0; i < 16; i++ {
+			if (addr>>uint(i))&1 == 1 {
+				if actualReuse {
+					// Block was reused - decrement weight (make it less likely to predict no reuse)
+					p.weights[i] = max(-32, p.weights[i]-p.learningRate)
+				} else {
+					// Block was not reused - increment weight (make it more likely to predict no reuse)
+					p.weights[i] = min(31, p.weights[i]+p.learningRate)
+				}
+			}
+		}
 
-			if actual {
-				// Block was reused - decrement weight (make it less likely to predict no reuse)
-				p.featureTables[i][tableIndex] = max(-32, p.featureTables[i][tableIndex]-p.learningRate)
-			} else {
-				// Block was not reused - increment weight (make it more likely to predict no reuse)
-				p.featureTables[i][tableIndex] = min(31, p.featureTables[i][tableIndex]+p.learningRate)
+		// Update weights based on tag bits (16 bits from higher address bits)
+		for i := 0; i < 16; i++ {
+			if (addr>>uint(i+16))&1 == 1 {
+				if actualReuse {
+					// Block was reused - decrement weight
+					p.weights[i+16] = max(-32, p.weights[i+16]-p.learningRate)
+				} else {
+					// Block was not reused - increment weight
+					p.weights[i+16] = min(31, p.weights[i+16]+p.learningRate)
+				}
 			}
 		}
 	}
 
-	if predicted == actual {
+	// Update accuracy statistics
+	if predictedNoReuse == actualNoReuse {
 		p.correctPredictions++
+	}
+}
+
+// Access method for direct training on cache hits (like earlier implementation)
+func (p *PerceptronVictimFinder) Access(addr uint64) {
+	// Direct training on hit - this is a reuse, so train with actualReuse=true
+	predictedNoReuse, exists := p.predictionCache[addr]
+	if exists {
+		p.train(addr, predictedNoReuse, true) // Block was accessed, so it was reused
+		delete(p.predictionCache, addr)
 	}
 }
 

@@ -12,8 +12,8 @@ echo ""
 
 # Test parameters
 SPARSITY=0.01
-START_SIZE=1024
-END_SIZE=8192
+START_SIZE=2048
+END_SIZE=2048
 COMPARE_SCRIPT="$HOME/compare.sh"
 
 # Check if compare.sh exists
