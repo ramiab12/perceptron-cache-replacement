@@ -199,8 +199,10 @@ func (b *Builder) configureCache(cacheModule *Comp) {
 
 	var victimFinder cache.VictimFinder
 	if b.usePerceptron {
+		fmt.Printf("[BUILDER] Using PerceptronVictimFinder for cache\n")
 		victimFinder = cache.NewPerceptronVictimFinder()
 	} else {
+		fmt.Printf("[BUILDER] Using LRUVictimFinder for cache\n")
 		victimFinder = cache.NewLRUVictimFinder()
 	}
 

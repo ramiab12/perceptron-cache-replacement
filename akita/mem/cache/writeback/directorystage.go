@@ -156,7 +156,12 @@ func (ds *directoryStage) handleReadHit(
 	}
 
 	// Train perceptron on cache hit (block was reused)
-	// Note: Training will be added later when we have proper access to victim finder
+	if perceptronVF, ok := ds.cache.directory.GetVictimFinder().(*cache.PerceptronVictimFinder); ok {
+		cachelineID, _ := getCacheLineID(trans.read.Address, ds.cache.log2BlockSize)
+		context := createVictimContext(trans, cachelineID)
+		features := perceptronVF.ExtractFeatures(context)
+		perceptronVF.TrainOnHit(features, context.Address)
+	}
 
 	tracing.AddTaskStep(
 		tracing.MsgIDAtReceiver(trans.read, ds.cache),
@@ -286,6 +291,14 @@ func (ds *directoryStage) doWriteHit(
 ) bool {
 	if block.IsLocked || block.ReadCount > 0 {
 		return false
+	}
+
+	// Train perceptron on cache hit (block was reused)
+	if perceptronVF, ok := ds.cache.directory.GetVictimFinder().(*cache.PerceptronVictimFinder); ok {
+		cachelineID, _ := getCacheLineID(trans.write.Address, ds.cache.log2BlockSize)
+		context := createVictimContext(trans, cachelineID)
+		features := perceptronVF.ExtractFeatures(context)
+		perceptronVF.TrainOnHit(features, context.Address)
 	}
 
 	return ds.writeToBank(trans, block)
@@ -427,6 +440,13 @@ func (ds *directoryStage) evict(
 	}
 
 	cacheLineID, _ := getCacheLineID(addr, ds.cache.log2BlockSize)
+
+	// Train perceptron on eviction (block was not reused)
+	if perceptronVF, ok := ds.cache.directory.GetVictimFinder().(*cache.PerceptronVictimFinder); ok {
+		context := createVictimContext(trans, victim.Tag) // Use victim's tag as the evicted address
+		features := perceptronVF.ExtractFeatures(context)
+		perceptronVF.TrainOnEviction(features, victim.Tag)
+	}
 
 	ds.updateTransForEviction(trans, victim, pid, cacheLineID)
 	ds.updateVictimBlockMetaData(victim, cacheLineID, pid)

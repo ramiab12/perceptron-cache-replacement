@@ -1,6 +1,8 @@
 package cache
 
 import (
+	"log"
+
 	"github.com/sarchlab/akita/v4/mem/vm"
 )
 
@@ -49,6 +51,9 @@ func NewPerceptronVictimFinder() *PerceptronVictimFinder {
 		p.featureTables[i] = make([]int32, 256)
 	}
 
+	log.Printf("[PERCEPTRON] Initialized PerceptronVictimFinder: threshold=%d, theta=%d, learningRate=%d, tables=6x256",
+		p.threshold, p.theta, p.learningRate)
+
 	return p
 }
 
@@ -83,6 +88,12 @@ func (p *PerceptronVictimFinder) FindVictimWithContext(set *Set, context *Victim
 	// if sum < threshold, predict reuse (keep block)
 	predictNoReuse := sum >= p.threshold
 
+	// Debug logging every 100 predictions to see activity
+	if p.totalPredictions%100 == 0 {
+		log.Printf("[PERCEPTRON] Prediction #%d: addr=0x%x, features=%v, sum=%d, threshold=%d, predictNoReuse=%t",
+			p.totalPredictions, context.Address, features, sum, p.threshold, predictNoReuse)
+	}
+
 	// Find best victim based on prediction
 	victim := p.selectVictim(set, predictNoReuse)
 
@@ -92,7 +103,13 @@ func (p *PerceptronVictimFinder) FindVictimWithContext(set *Set, context *Victim
 	return victim
 }
 
-// extractFeatures extracts 6 features using address-as-PC-proxy
+// ExtractFeatures extracts 6 features using address-as-PC-proxy (public method)
+// Based on MICRO 2016 paper Section IV-F, adapted for GPU context
+func (p *PerceptronVictimFinder) ExtractFeatures(context *VictimContext) [6]uint32 {
+	return p.extractFeatures(context)
+}
+
+// extractFeatures extracts 6 features using address-as-PC-proxy (internal method)
 // Based on MICRO 2016 paper Section IV-F, adapted for GPU context
 func (p *PerceptronVictimFinder) extractFeatures(context *VictimContext) [6]uint32 {
 	features := [6]uint32{}
@@ -179,11 +196,19 @@ func (p *PerceptronVictimFinder) selectVictim(set *Set, predictNoReuse bool) *Bl
 
 // TrainOnHit trains the predictor when a block is hit (reused)
 func (p *PerceptronVictimFinder) TrainOnHit(features [6]uint32, addr uint64) {
+	// Log training activity occasionally
+	if p.totalPredictions%50 == 0 {
+		log.Printf("[PERCEPTRON] TrainOnHit: addr=0x%x, features=%v (block was reused)", addr, features)
+	}
 	p.train(features, addr, false, true) // predicted no reuse, but actually reused
 }
 
 // TrainOnEviction trains the predictor when a block is evicted (not reused)
 func (p *PerceptronVictimFinder) TrainOnEviction(features [6]uint32, addr uint64) {
+	// Log training activity occasionally
+	if p.totalPredictions%50 == 0 {
+		log.Printf("[PERCEPTRON] TrainOnEviction: addr=0x%x, features=%v (block was NOT reused)", addr, features)
+	}
 	p.train(features, addr, true, false) // predicted reuse, but actually not reused
 }
 

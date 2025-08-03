@@ -34,6 +34,7 @@ type Directory interface {
 	TotalSize() uint64
 	WayAssociativity() int
 	GetSets() []Set
+	GetVictimFinder() VictimFinder
 	Reset()
 }
 
@@ -163,4 +164,9 @@ func (d *DirectoryImpl) Reset() {
 // WayAssociativity returns the number of ways per set in the cache.
 func (d *DirectoryImpl) WayAssociativity() int {
 	return d.NumWays
+}
+
+// GetVictimFinder returns the victim finder used by this directory.
+func (d *DirectoryImpl) GetVictimFinder() VictimFinder {
+	return d.victimFinder
 }
