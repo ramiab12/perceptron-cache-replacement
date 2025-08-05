@@ -1,191 +1,234 @@
 #!/bin/bash
 
-# Comprehensive test script for perceptron vs LRU cache replacement
-# Tests SPMV with growing matrix sizes from 1024 to 16384 with 0.01 sparsity
-# Uses the user's compare.sh script to extract and compare results
+# Simplified Comprehensive SPMV Test Script
+# Tests SPMV workload with perceptron vs LRU cache replacement
+# Measures cache performance AND kernel execution time from database
+# Single results file with appended results as tests complete
 
 set -e
 
-echo "🧪 Comprehensive Perceptron vs LRU Performance Test"
-echo "=================================================="
+echo "🚀 SPMV Comprehensive Perceptron vs LRU Test"
+echo "============================================"
 echo ""
 
 # Test parameters
 SPARSITY=0.01
-START_SIZE=2048
-END_SIZE=2048
-COMPARE_SCRIPT="$HOME/compare.sh"
+FIXED_SEED=12345
+TIMEOUT=900  # 15 minutes per test
+RESULTS_DIR="$HOME/perceptron_research/results"
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+RESULTS_FILE="$RESULTS_DIR/spmv_comprehensive_results_$TIMESTAMP.txt"
 
-# Check if compare.sh exists
-if [ ! -f "$COMPARE_SCRIPT" ]; then
-    echo "❌ Error: compare.sh not found at $COMPARE_SCRIPT"
-    exit 1
-fi
+# Matrix sizes to test (up to 4096 as requested)
+MATRIX_SIZES=(1024 2048 4096 8192 16384)
 
 # Create results directory
-mkdir -p ../results
-RESULTS_FILE="../results/comprehensive_results_$(date +%Y%m%d_%H%M%S).txt"
+mkdir -p "$RESULTS_DIR"
 
 echo "📊 Test Configuration:"
-echo "- Matrix sizes: ${START_SIZE} to ${END_SIZE} (powers of 2)"
-echo "- Sparsity: ${SPARSITY}"
-echo "- Compare script: ${COMPARE_SCRIPT}"
-echo "- Results file: ${RESULTS_FILE}"
+echo "- Workload: SPMV (Sparse Matrix-Vector Multiplication)"
+echo "- Matrix sizes: ${MATRIX_SIZES[@]}"
+echo "- Sparsity: $SPARSITY"
+echo "- Fixed seed: $FIXED_SEED"
+echo "- Timeout per test: ${TIMEOUT}s"
+echo "- Results file: $RESULTS_FILE"
 echo ""
 
-# Function to clean old SQLite files but keep the most recent one
-cleanup_sqlite() {
-    local dir=$1
-    echo "🧹 Cleaning old SQLite files in $dir..."
-    cd "$dir"
-    if ls akita_sim*.sqlite3 1> /dev/null 2>&1; then
-        # Keep only the most recent SQLite file
-        ls -t akita_sim*.sqlite3 | tail -n +2 | xargs -r rm -f
-        echo "   Kept most recent SQLite file: $(ls -t akita_sim*.sqlite3 | head -1)"
+# Initialize results file with header
+cat > "$RESULTS_FILE" << EOF
+SPMV Comprehensive Perceptron vs LRU Test Results
+================================================
+Test started: $(date)
+Configuration:
+- Matrix sizes: ${MATRIX_SIZES[@]}
+- Sparsity: $SPARSITY
+- Fixed seed: $FIXED_SEED
+- Timeout: ${TIMEOUT}s
+
+Format: Size | Policy | Hits | Misses | Hit-Rate | Kernel-Time | Miss-Reduction | Time-Improvement
+=====================================================================================================
+
+EOF
+
+# Function to extract metrics from database
+extract_metrics() {
+    local db_file=$1
+    
+    if [ ! -f "$db_file" ]; then
+        echo "0 0 0"
+        return
+    fi
+    
+    # Extract cache hits/misses
+    local cache_result=$(sqlite3 "$db_file" "SELECT 
+        COALESCE(SUM(CASE WHEN What IN ('read-hit','write-hit') THEN Value END),0),
+        COALESCE(SUM(CASE WHEN What IN ('read-miss','write-miss') THEN Value END),0)
+        FROM mgpusim_metrics WHERE Location LIKE '%L2Cache%';" 2>/dev/null)
+    
+    # Extract kernel execution time
+    local kernel_time=$(sqlite3 "$db_file" "SELECT 
+        COALESCE(SUM(Value),0) 
+        FROM mgpusim_metrics WHERE What='kernel_time';" 2>/dev/null)
+    
+    if [ -n "$cache_result" ] && [ -n "$kernel_time" ]; then
+        local hits=$(echo "${cache_result%%|*}" | cut -d. -f1)
+        local misses=$(echo "${cache_result##*|}" | cut -d. -f1)
+        echo "$hits $misses $kernel_time"
+    else
+        echo "0 0 0"
+    fi
+}
+
+# Function to run a single SPMV test
+run_spmv_test() {
+    local size=$1
+    local policy=$2
+    local repo_dir=$3
+    local binary_name=$4
+    
+    cd "$repo_dir/amd/samples/spmv"
+    
+    # Clean previous results
+    rm -f akita_sim*.sqlite3
+    
+    # Build binary quietly
+    go build -o "$binary_name" > /dev/null 2>&1
+    if [ $? -ne 0 ]; then
+        echo "BUILD_FAILED 0 0 0" >&2
+        return
+    fi
+    
+    # Prepare command
+    local flags="-dim $size -sparsity $SPARSITY -seed $FIXED_SEED -timing -report-cache-hit-rate"
+    
+    # Run test with timeout
+    timeout $TIMEOUT ./$binary_name $flags > /dev/null 2>&1
+    local exit_code=$?
+    
+    if [ $exit_code -eq 0 ]; then
+        # Get the latest database
+        local db=$(ls -t akita_sim*.sqlite3 2>/dev/null | head -1)
+        if [ -n "$db" ]; then
+            # Extract metrics
+            read hits misses kernel_time <<<$(extract_metrics "$db")
+            
+            if [ "$hits" -gt 0 ] || [ "$misses" -gt 0 ]; then
+                local total=$((hits + misses))
+                local hit_rate=$(echo "scale=2; ($hits*100)/($total)" | bc 2>/dev/null || echo "0")
+                
+                echo "$hits $misses $hit_rate $kernel_time"
+            else
+                echo "NO_METRICS 0 0 0"
+            fi
+        else
+            echo "NO_DATABASE 0 0 0"
+        fi
+    elif [ $exit_code -eq 124 ]; then
+        echo "TIMEOUT 0 0 0"
+    else
+        echo "FAILED 0 0 0"
     fi
 }
 
 # Function to test a specific matrix size
 test_matrix_size() {
     local size=$1
+    
     echo ""
-    echo "🔬 Testing Matrix Size: ${size}x${size}"
-    echo "================================="
+    echo "🔬 Testing SPMV ${size}x${size} Matrix"
+    echo "======================================"
     
-    # Clean old SQLite files from both repositories before test
-    cleanup_sqlite "$HOME/perceptron_research/mgpusim/amd/samples/spmv"
-    cleanup_sqlite "$HOME/mgpusim_original/amd/samples/spmv"
+    # Test perceptron
+    echo "🔄 Testing Perceptron..."
+    read p_hits p_misses p_hit_rate p_kernel_time <<<$(run_spmv_test "$size" "Perceptron" "/home/rami/perceptron_research/mgpusim" "spmv_perc")
+    echo "  ✅ Perceptron: hits=$p_hits, misses=$p_misses, hit-rate=$p_hit_rate%, kernel-time=${p_kernel_time}s"
     
-    # Run comparison using the user's compare.sh script
-    echo "🏃 Running comparison..."
+    # Test LRU
+    echo "🔄 Testing LRU..."
+    read l_hits l_misses l_hit_rate l_kernel_time <<<$(run_spmv_test "$size" "LRU" "/home/rami/mgpusim_original" "spmv_lru")
+    echo "  ✅ LRU: hits=$l_hits, misses=$l_misses, hit-rate=$l_hit_rate%, kernel-time=${l_kernel_time}s"
     
-    # Use the exact same approach as compare.sh but with our perceptron repo
-    local perc_repo="$HOME/perceptron_research/mgpusim"
-    local lru_repo="$HOME/mgpusim_original"
-    local flags="-dim $size -sparsity $SPARSITY -timing -trace-mem -report-cache-hit-rate"
-    
-    echo "sample : spmv"
-    echo "flags  : $flags"
-    echo "----------"
-    
-    # Run perceptron version
-    echo "  Running perceptron version..."
-    cd "$perc_repo/amd/samples/spmv"
-    go build -o run_perc
-    rm -f akita_sim*.sqlite3
-    ./run_perc $flags 1>&2 
-    db_perc=$(ls -t akita_sim*.sqlite3 | head -1)
-    echo "  [perc] using $db_perc" >&2
-    out_perc=$(sqlite3 "$db_perc" \
-      "SELECT \
-       COALESCE(SUM(CASE WHEN What IN ('read-hit','write-hit')  THEN Value END),0), \
-       COALESCE(SUM(CASE WHEN What IN ('read-miss','write-miss') THEN Value END),0) \
-       FROM mgpusim_metrics WHERE Location LIKE '%L2Cache%';")
-    h1=$(echo "${out_perc%%|*}" | cut -d. -f1)
-    m1=$(echo "${out_perc##*|}" | cut -d. -f1)
-    
-    # Run LRU version  
-    echo "  Running LRU version..."
-    cd "$lru_repo/amd/samples/spmv"
-    go build -o run_lru
-    rm -f akita_sim*.sqlite3
-    ./run_lru $flags 1>&2 
-    db_lru=$(ls -t akita_sim*.sqlite3 | head -1)
-    echo "  [lru] using $db_lru" >&2
-    out_lru=$(sqlite3 "$db_lru" \
-      "SELECT \
-       COALESCE(SUM(CASE WHEN What IN ('read-hit','write-hit')  THEN Value END),0), \
-       COALESCE(SUM(CASE WHEN What IN ('read-miss','write-miss') THEN Value END),0) \
-       FROM mgpusim_metrics WHERE Location LIKE '%L2Cache%';")
-    h0=$(echo "${out_lru%%|*}" | cut -d. -f1)
-    m0=$(echo "${out_lru##*|}" | cut -d. -f1)
-    
-    # Calculate metrics (same as compare.sh) with division by zero protection
-    if [ "$((h1 + m1))" -eq 0 ]; then
-        hr1="0.00"
+    # Calculate improvements and append to results file
+    if [[ "$p_hits" =~ ^[0-9]+$ ]] && [[ "$l_hits" =~ ^[0-9]+$ ]] && [ "$p_misses" -gt 0 ] && [ "$l_misses" -gt 0 ]; then
+        local miss_reduction=$(echo "scale=2; ($l_misses-$p_misses)*100/$l_misses" | bc -l)
+        # Convert scientific notation to decimal for bc
+        local l_time_decimal=$(printf "%.10f" "$l_kernel_time")
+        local p_time_decimal=$(printf "%.10f" "$p_kernel_time")
+        local time_improvement=$(echo "scale=2; ($l_time_decimal-$p_time_decimal)*100/$l_time_decimal" | bc -l)
+        
+        # Append results to file
+        cat >> "$RESULTS_FILE" << EOF
+
+${size}x${size} Matrix Results ($(date)):
+------------------------------------------
+Perceptron | $p_hits | $p_misses | $p_hit_rate% | ${p_kernel_time}s
+LRU        | $l_hits | $l_misses | $l_hit_rate% | ${l_kernel_time}s
+Improvements: Miss reduction: $miss_reduction%, Time improvement: $time_improvement%
+
+EOF
+        
+        echo "📈 Results Summary:"
+        printf "   Perceptron: hits=%-8s misses=%-8s hit-rate=%s%% kernel-time=%ss\n" "$p_hits" "$p_misses" "$p_hit_rate" "$p_kernel_time"
+        printf "   LRU:        hits=%-8s misses=%-8s hit-rate=%s%% kernel-time=%ss\n" "$l_hits" "$l_misses" "$l_hit_rate" "$l_kernel_time"
+        printf "   📊 Miss reduction: %s%%, Time improvement: %s%%\n" "$miss_reduction" "$time_improvement"
+        
+        # Highlight exceptional results
+        if (( $(echo "$miss_reduction > 10" | bc -l) )); then
+            echo "   🎉 EXCELLENT: >10% miss reduction!" | tee -a "$RESULTS_FILE"
+        elif (( $(echo "$miss_reduction > 5" | bc -l) )); then
+            echo "   🔥 GREAT: >5% miss reduction!" | tee -a "$RESULTS_FILE"
+        fi
+        
+        if (( $(echo "$time_improvement > 5" | bc -l) )); then
+            echo "   ⚡ FAST: >5% execution time improvement!" | tee -a "$RESULTS_FILE"
+        fi
+        
+        # Real-time append to show progress
+        echo "✅ Results appended to: $RESULTS_FILE"
+        
     else
-        hr1=$(echo "scale=2; ($h1*100)/($h1+$m1)" | bc)
+        echo "   ❌ Test failed or incomplete results"
+        cat >> "$RESULTS_FILE" << EOF
+
+${size}x${size} Matrix Results ($(date)):
+------------------------------------------
+❌ FAILED - Perceptron: $p_hits $p_misses $p_hit_rate $p_kernel_time
+❌ FAILED - LRU: $l_hits $l_misses $l_hit_rate $l_kernel_time
+
+EOF
     fi
-    
-    if [ "$((h0 + m0))" -eq 0 ]; then
-        hr0="0.00"
-    else
-        hr0=$(echo "scale=2; ($h0*100)/($h0+$m0)" | bc)
-    fi
-    
-    if [ "$m0" -eq 0 ]; then
-        red="0.00"
-    else
-        red=$(echo  "scale=2; ($m0-$m1)*100/$m0"   | bc)
-    fi
-    
-    # Display results
-    printf "\nPerceptron  hits %-10s misses %-10s hit-rate %s%%\n" "$h1" "$m1" "$hr1"
-    printf "LRU         hits %-10s misses %-10s hit-rate %s%%\n" "$h0" "$m0" "$hr0"
-    printf "Miss-reduction: %s%%\n" "$red"
-    
-    # Save results to file
-    {
-        echo "Matrix Size: ${size}x${size}"
-        echo "Sparsity: ${SPARSITY}"
-        echo "Timestamp: $(date)"
-        echo "----------------------------------------"
-        printf "Perceptron  hits %-10s misses %-10s hit-rate %s%%\n" "$h1" "$m1" "$hr1"
-        printf "LRU         hits %-10s misses %-10s hit-rate %s%%\n" "$h0" "$m0" "$hr0"
-        printf "Miss-reduction: %s%%\n" "$red"
-        echo ""
-        echo "========================================"
-        echo ""
-    } >> "$RESULTS_FILE"
-    
-    # Clean up SQLite files after test
-    cleanup_sqlite "$HOME/perceptron_research/mgpusim/amd/samples/spmv"
-    cleanup_sqlite "$HOME/mgpusim_original/amd/samples/spmv"
 }
 
-# Main test loop - test powers of 2 from 1024 to 16384
-echo "🚀 Starting comprehensive tests..."
-{
-    echo "Comprehensive Perceptron vs LRU Performance Test Results"
-    echo "======================================================="
-    echo "Test started: $(date)"
-    echo "Sparsity: ${SPARSITY}"
-    echo ""
-} > "$RESULTS_FILE"
+# Main test execution
+echo "🧪 Starting SPMV comprehensive tests..."
+echo ""
 
-current_size=$START_SIZE
-while [ $current_size -le $END_SIZE ]; do
-    test_matrix_size $current_size
-    current_size=$((current_size * 2))
+total_tests=${#MATRIX_SIZES[@]}
+current_test=0
+
+for size in "${MATRIX_SIZES[@]}"; do
+    current_test=$((current_test + 1))
+    echo "🔄 Progress: Test $current_test/$total_tests"
+    test_matrix_size "$size"
 done
 
+# Final summary
 echo ""
-echo "✅ All tests completed!"
-echo ""
-echo "📊 Results Summary:"
-echo "=================="
-echo "📁 Detailed results saved to: $RESULTS_FILE"
-echo ""
-echo "🔍 Quick Summary:"
-grep -E "(Matrix Size|Miss-reduction)" "$RESULTS_FILE" | paste - - | while read -r matrix_line reduction_line; do
-    matrix=$(echo "$matrix_line" | cut -d: -f2 | xargs)
-    reduction=$(echo "$reduction_line" | cut -d: -f2 | xargs)
-    printf "%-15s -> Miss Reduction: %s\n" "$matrix" "$reduction"
-done
+echo "🎯 All Tests Completed!"
+echo "======================="
+cat >> "$RESULTS_FILE" << EOF
 
-echo ""
-echo "📈 Analysis:"
-echo "- Check $RESULTS_FILE for detailed metrics"
-echo "- Look for consistent miss reduction improvements"
-echo "- Higher matrix sizes may show better perceptron performance"
-echo "- Expected: 5-15% miss reduction, 2-8% hit rate improvement"
-echo ""
-echo "🎯 Performance Targets Met:"
-if grep -q "Miss-reduction: [5-9]\|Miss-reduction: 1[0-5]" "$RESULTS_FILE"; then
-    echo "✅ Miss reduction targets achieved (5-15%)"
-else
-    echo "⚠️  Check results - miss reduction may need tuning"
-fi
+=====================================================================================================
+Test completed: $(date)
+Total tests run: $total_tests matrix sizes
+Results file: $RESULTS_FILE
 
+🔍 To view full results: cat $RESULTS_FILE
+EOF
+
+echo "Test finished: $(date)"
+echo "📊 Complete results saved to: $RESULTS_FILE"
 echo ""
-echo "🏁 Test completed successfully!"
+echo "🔍 To view results:"
+echo "   cat $RESULTS_FILE"
+echo "   tail -n 50 $RESULTS_FILE  # View recent results"

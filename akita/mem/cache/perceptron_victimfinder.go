@@ -1,8 +1,6 @@
 package cache
 
 import (
-	"log"
-
 	"github.com/sarchlab/akita/v4/mem/vm"
 )
 
@@ -12,6 +10,12 @@ type VictimContext struct {
 	PID         vm.PID
 	AccessType  string // "read" or "write"
 	CacheLineID uint64
+}
+
+// CachedPrediction stores both prediction and sum to avoid duplicate calculations
+type CachedPrediction struct {
+	predictNoReuse bool
+	sum            int32
 }
 
 // PerceptronVictimFinder implements perceptron-based cache replacement
@@ -33,18 +37,18 @@ type PerceptronVictimFinder struct {
 	// Learning rate for weight updates
 	learningRate int32
 
-	// Cache to store predictions for training feedback
-	// Maps address -> prediction made during FindVictimWithContext
-	predictionCache map[uint64]bool
+	// Cache to store predictions AND sums for training feedback
+	// Maps address -> cached prediction with sum to avoid duplicate calculations
+	predictionCache map[uint64]CachedPrediction
 
 	// Statistics for monitoring
 	totalPredictions   int64
 	correctPredictions int64
 }
 
-// NewPerceptronVictimFinder creates a new perceptron victim finder with default parameters
+// NewPerceptronVictimFinder creates a new perceptron victim finder with MICRO 2016 paper parameters
 func NewPerceptronVictimFinder() *PerceptronVictimFinder {
-	return NewPerceptronVictimFinderWithParams(1, 8, 2) // Lowered theta from 32 to 8 (matching earlier implementation)
+	return NewPerceptronVictimFinderWithParams(0, 32, 1) // MICRO 2016 paper parameters: τ=0, θ=32, lr=1
 }
 
 // NewPerceptronVictimFinderWithParams creates a perceptron with custom parameters
@@ -53,7 +57,7 @@ func NewPerceptronVictimFinderWithParams(threshold, theta, learningRate int32) *
 		threshold:       threshold,
 		theta:           theta,
 		learningRate:    learningRate,
-		predictionCache: make(map[uint64]bool),
+		predictionCache: make(map[uint64]CachedPrediction),
 	}
 
 	// Initialize 32 weights to 0 (matching earlier successful implementation)
@@ -61,29 +65,31 @@ func NewPerceptronVictimFinderWithParams(threshold, theta, learningRate int32) *
 		p.weights[i] = 0
 	}
 
-	log.Printf("[PERCEPTRON] Initialized PerceptronVictimFinder: threshold=%d, theta=%d, learningRate=%d, weights=32",
-		p.threshold, p.theta, p.learningRate)
+	// Removed logging for performance
 
 	return p
 }
 
 // FindVictim implements the VictimFinder interface
-// Falls back to LRU behavior for compatibility
+// Uses direct block traversal (no LRU maintenance)
 func (p *PerceptronVictimFinder) FindVictim(set *Set) *Block {
-	// Use LRU as fallback when no context is provided
-	for _, block := range set.LRUQueue {
+	// Direct block traversal when no context is provided
+	for _, block := range set.Blocks {
 		if !block.IsValid && !block.IsLocked {
 			return block
 		}
 	}
 
-	for _, block := range set.LRUQueue {
+	for _, block := range set.Blocks {
 		if !block.IsLocked {
 			return block
 		}
 	}
 
-	return set.LRUQueue[0]
+	if len(set.Blocks) > 0 {
+		return set.Blocks[0]
+	}
+	return nil
 }
 
 // FindVictimWithContext implements perceptron-based victim selection
@@ -95,17 +101,16 @@ func (p *PerceptronVictimFinder) FindVictimWithContext(set *Set, context *Victim
 	// if sum < threshold, predict reuse (keep block)
 	predictNoReuse := sum >= p.threshold
 
-	// Store prediction for training feedback
-	p.predictionCache[context.Address] = predictNoReuse
-
-	// Debug logging every 100 predictions to see activity
-	if p.totalPredictions%100 == 0 {
-		log.Printf("[PERCEPTRON] Prediction #%d: addr=0x%x, sum=%d, threshold=%d, predictNoReuse=%t",
-			p.totalPredictions, context.Address, sum, p.threshold, predictNoReuse)
+	// Store BOTH prediction and sum for training feedback (avoids duplicate calculation)
+	p.predictionCache[context.Address] = CachedPrediction{
+		predictNoReuse: predictNoReuse,
+		sum:            sum,
 	}
 
-	// Find best victim based on prediction
-	victim := p.selectVictim(set, predictNoReuse)
+	// Removed all debug logging for performance
+
+	// Find best victim based on prediction and confidence (HYBRID APPROACH)
+	victim := p.selectVictim(set, predictNoReuse, sum)
 
 	// Update statistics
 	p.totalPredictions++
@@ -178,60 +183,155 @@ func (p *PerceptronVictimFinder) getTableIndex(feature uint32, addr uint64) uint
 	return (hashedFeature ^ addrBits) % 256
 }
 
-// selectVictim selects the best victim based on prediction
-func (p *PerceptronVictimFinder) selectVictim(set *Set, predictNoReuse bool) *Block {
-	if predictNoReuse {
-		// Prefer evicting blocks that are predicted to have no reuse
-		// Start with LRU order but prioritize predicted dead blocks
-		for _, block := range set.LRUQueue {
-			if !block.IsValid && !block.IsLocked {
-				return block
-			}
-		}
+// selectVictim selects the best victim using HYBRID approach from MICRO 2016 paper
+func (p *PerceptronVictimFinder) selectVictim(set *Set, predictNoReuse bool, predictionSum int32) *Block {
+	// MICRO 2016 HYBRID APPROACH: Use perceptron when confident, LRU baseline when not
 
-		for _, block := range set.LRUQueue {
-			if !block.IsLocked {
-				return block
-			}
-		}
-	} else {
-		// Use standard LRU for blocks predicted to have reuse
-		for _, block := range set.LRUQueue {
-			if !block.IsValid && !block.IsLocked {
-				return block
-			}
-		}
-
-		for _, block := range set.LRUQueue {
-			if !block.IsLocked {
-				return block
-			}
+	// First pass: Always prefer invalid blocks (regardless of prediction)
+	for _, block := range set.Blocks {
+		if !block.IsValid && !block.IsLocked {
+			return block
 		}
 	}
 
-	return set.LRUQueue[0]
+	// Check prediction confidence using theta threshold (like MICRO 2016 paper)
+	isConfident := abs(predictionSum) >= p.theta
+
+	if isConfident {
+		// HIGH CONFIDENCE: Use perceptron prediction
+		if predictNoReuse {
+			// Perceptron says "no reuse" - find any unlocked block to evict
+			for _, block := range set.Blocks {
+				if !block.IsLocked {
+					return block
+				}
+			}
+		} else {
+			// Perceptron says "reuse likely" - use PseudoLRU baseline to preserve locality
+			return p.findPseudoLRUVictim(set)
+		}
+	} else {
+		// LOW CONFIDENCE: Fall back to PseudoLRU baseline (like MICRO 2016 paper)
+		return p.findPseudoLRUVictim(set)
+	}
+
+	// Final fallback
+	if len(set.Blocks) > 0 {
+		return set.Blocks[0]
+	}
+	return nil
+}
+
+// findPseudoLRUVictim implements PseudoLRU victim selection (MICRO 2016 paper baseline)
+func (p *PerceptronVictimFinder) findPseudoLRUVictim(set *Set) *Block {
+	numWays := len(set.Blocks)
+	victimWay := p.getPseudoLRUVictim(set, numWays)
+
+	// Return the victim block if it's not locked
+	if victimWay < numWays && !set.Blocks[victimWay].IsLocked {
+		return set.Blocks[victimWay]
+	}
+
+	// Fallback: return first unlocked block
+	for _, block := range set.Blocks {
+		if !block.IsLocked {
+			return block
+		}
+	}
+
+	return nil
+}
+
+// getPseudoLRUVictim returns the way ID of the PseudoLRU victim
+func (p *PerceptronVictimFinder) getPseudoLRUVictim(set *Set, numWays int) int {
+	switch numWays {
+	case 2:
+		// 2-way: bit 0 indicates which way to replace
+		if (set.PseudoLRUBits & 1) == 0 {
+			return 0
+		}
+		return 1
+	case 4:
+		// 4-way: follow the tree bits to find victim
+		//     bit0
+		//    /    \
+		//  bit1   bit2
+		//  / \    / \
+		// W0 W1  W2 W3
+		if (set.PseudoLRUBits & 1) == 0 {
+			// Left subtree
+			if (set.PseudoLRUBits & (1 << 1)) == 0 {
+				return 0
+			}
+			return 1
+		} else {
+			// Right subtree
+			if (set.PseudoLRUBits & (1 << 2)) == 0 {
+				return 2
+			}
+			return 3
+		}
+	case 8:
+		// 8-way: follow the 7-bit tree
+		return p.getPseudoLRUVictim8Way(set)
+	default:
+		// Fallback: round-robin
+		return int(set.PseudoLRUBits % uint64(numWays))
+	}
+}
+
+// getPseudoLRUVictim8Way returns victim way for 8-way associative cache
+func (p *PerceptronVictimFinder) getPseudoLRUVictim8Way(set *Set) int {
+	bits := set.PseudoLRUBits
+
+	if (bits & 1) == 0 {
+		// Left subtree (ways 0-3)
+		if (bits & (1 << 1)) == 0 {
+			// Left-left subtree (ways 0-1)
+			if (bits & (1 << 3)) == 0 {
+				return 0
+			}
+			return 1
+		} else {
+			// Left-right subtree (ways 2-3)
+			if (bits & (1 << 4)) == 0 {
+				return 2
+			}
+			return 3
+		}
+	} else {
+		// Right subtree (ways 4-7)
+		if (bits & (1 << 2)) == 0 {
+			// Right-left subtree (ways 4-5)
+			if (bits & (1 << 5)) == 0 {
+				return 4
+			}
+			return 5
+		} else {
+			// Right-right subtree (ways 6-7)
+			if (bits & (1 << 6)) == 0 {
+				return 6
+			}
+			return 7
+		}
+	}
 }
 
 // Training methods
 
 // TrainOnHit trains the predictor when a block is hit (reused)
 func (p *PerceptronVictimFinder) TrainOnHit(addr uint64) {
-	// Get the actual prediction we made for this address
-	predictedNoReuse, exists := p.predictionCache[addr]
+	// Get the actual prediction AND sum we made for this address
+	cached, exists := p.predictionCache[addr]
 	if !exists {
 		// If no prediction cached, skip training (shouldn't happen in normal flow)
-		log.Printf("[PERCEPTRON] TrainOnHit: No prediction cached for addr=0x%x, cache size=%d", addr, len(p.predictionCache))
 		return
 	}
 
-	// Log training activity occasionally
-	if p.totalPredictions%10 == 0 {
-		log.Printf("[PERCEPTRON] TrainOnHit: addr=0x%x, predicted=%t, actual=true (reused)",
-			addr, predictedNoReuse)
-	}
+	// Removed training logging for performance
 
-	// Train with actual prediction vs actual outcome
-	p.train(addr, predictedNoReuse, true) // actual = true (reused)
+	// Train with cached prediction and sum vs actual outcome (OPTIMIZED - no duplicate calculation)
+	p.trainWithSum(addr, cached.predictNoReuse, cached.sum, true) // actual = true (reused)
 
 	// Clean up prediction cache to prevent memory leak
 	delete(p.predictionCache, addr)
@@ -239,30 +339,25 @@ func (p *PerceptronVictimFinder) TrainOnHit(addr uint64) {
 
 // TrainOnEviction trains the predictor when a block is evicted (not reused)
 func (p *PerceptronVictimFinder) TrainOnEviction(addr uint64) {
-	// Get the actual prediction we made for this address
-	predictedNoReuse, exists := p.predictionCache[addr]
+	// Get the actual prediction AND sum we made for this address
+	cached, exists := p.predictionCache[addr]
 	if !exists {
 		// If no prediction cached, skip training (shouldn't happen in normal flow)
 		return
 	}
 
-	// Log training activity occasionally
-	if p.totalPredictions%10 == 0 {
-		log.Printf("[PERCEPTRON] TrainOnEviction: addr=0x%x, predicted=%t, actual=false (not reused)",
-			addr, predictedNoReuse)
-	}
+	// Removed eviction training logging for performance
 
-	// Train with actual prediction vs actual outcome
-	p.train(addr, predictedNoReuse, false) // actual = false (not reused)
+	// Train with cached prediction and sum vs actual outcome (OPTIMIZED - no duplicate calculation)
+	p.trainWithSum(addr, cached.predictNoReuse, cached.sum, false) // actual = false (not reused)
 
 	// Clean up prediction cache to prevent memory leak
 	delete(p.predictionCache, addr)
 }
 
-// train implements the perceptron learning algorithm
-func (p *PerceptronVictimFinder) train(addr uint64, predictedNoReuse bool, actualReuse bool) {
-	// Calculate current prediction confidence
-	sum := p.calculatePredictionSum(addr)
+// trainWithSum implements the perceptron learning algorithm using cached sum (OPTIMIZED)
+func (p *PerceptronVictimFinder) trainWithSum(addr uint64, predictedNoReuse bool, sum int32, actualReuse bool) {
+	// Use the cached sum instead of recalculating (PERFORMANCE OPTIMIZATION)
 
 	// Convert to consistent semantics: actualNoReuse = !actualReuse
 	actualNoReuse := !actualReuse
@@ -305,11 +400,19 @@ func (p *PerceptronVictimFinder) train(addr uint64, predictedNoReuse bool, actua
 // Access method for direct training on cache hits (like earlier implementation)
 func (p *PerceptronVictimFinder) Access(addr uint64) {
 	// Direct training on hit - this is a reuse, so train with actualReuse=true
-	predictedNoReuse, exists := p.predictionCache[addr]
+	cached, exists := p.predictionCache[addr]
 	if exists {
-		p.train(addr, predictedNoReuse, true) // Block was accessed, so it was reused
+		p.trainWithSum(addr, cached.predictNoReuse, cached.sum, true) // Block was accessed, so it was reused (OPTIMIZED)
 		delete(p.predictionCache, addr)
 	}
+}
+
+// train implements the perceptron learning algorithm (fallback method for compatibility)
+func (p *PerceptronVictimFinder) train(addr uint64, predictedNoReuse bool, actualReuse bool) {
+	// Calculate current prediction confidence (this is the old non-optimized version)
+	sum := p.calculatePredictionSum(addr)
+	// Delegate to optimized version
+	p.trainWithSum(addr, predictedNoReuse, sum, actualReuse)
 }
 
 // Utility functions

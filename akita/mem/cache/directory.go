@@ -17,12 +17,14 @@ type Block struct {
 	ReadCount    int
 	IsLocked     bool
 	DirtyMask    []bool
+	// PseudoLRU doesn't need per-block tracking - uses set-level bit tree
 }
 
 // A Set is a list of blocks where a certain piece memory can be stored at
 type Set struct {
-	Blocks   []*Block
-	LRUQueue []*Block
+	Blocks []*Block
+	// PseudoLRU: binary tree of bits for efficient LRU approximation (MICRO 2016 paper approach)
+	PseudoLRUBits uint64 // Bit vector for PseudoLRU tree (supports up to 64-way associativity)
 }
 
 // A Directory stores the information about what is stored in the cache.
@@ -126,18 +128,104 @@ func (d *DirectoryImpl) FindVictimWithContext(addr uint64, context *VictimContex
 	return d.victimFinder.FindVictim(set)
 }
 
-// Visit moves the block to the end of the LRUQueue
+// Visit updates PseudoLRU bits (MICRO 2016 paper approach - very efficient)
 func (d *DirectoryImpl) Visit(block *Block) {
-	set := d.Sets[block.SetID]
+	// PseudoLRU: Update binary tree bits to mark this way as recently used
+	set := &d.Sets[block.SetID]
+	d.updatePseudoLRU(set, block.WayID)
+}
 
-	for i, b := range set.LRUQueue {
-		if b == block {
-			set.LRUQueue = append(set.LRUQueue[:i], set.LRUQueue[i+1:]...)
-			break
+// updatePseudoLRU updates the PseudoLRU tree bits for a given way
+func (d *DirectoryImpl) updatePseudoLRU(set *Set, wayID int) {
+	numWays := len(set.Blocks)
+
+	// For common associativities, use optimized bit patterns
+	switch numWays {
+	case 2:
+		// 2-way: 1 bit (bit 0)
+		// Way 0 accessed -> set bit 0 to 1, Way 1 accessed -> set bit 0 to 0
+		if wayID == 0 {
+			set.PseudoLRUBits |= 1 // Set bit 0
+		} else {
+			set.PseudoLRUBits &= ^uint64(1) // Clear bit 0
+		}
+	case 4:
+		// 4-way: 3 bits (tree structure)
+		//     bit0
+		//    /    \
+		//  bit1   bit2
+		//  / \    / \
+		// W0 W1  W2 W3
+		if wayID < 2 {
+			set.PseudoLRUBits &= ^uint64(1) // Clear bit 0 (left subtree)
+			if wayID == 0 {
+				set.PseudoLRUBits |= (1 << 1) // Set bit 1
+			} else {
+				set.PseudoLRUBits &= ^uint64(1 << 1) // Clear bit 1
+			}
+		} else {
+			set.PseudoLRUBits |= 1 // Set bit 0 (right subtree)
+			if wayID == 2 {
+				set.PseudoLRUBits |= (1 << 2) // Set bit 2
+			} else {
+				set.PseudoLRUBits &= ^uint64(1 << 2) // Clear bit 2
+			}
+		}
+	case 8:
+		// 8-way: 7 bits (full binary tree)
+		d.updatePseudoLRU8Way(set, wayID)
+	default:
+		// Fallback: use simple round-robin for other associativities
+		set.PseudoLRUBits = (set.PseudoLRUBits + 1) % uint64(numWays)
+	}
+}
+
+// updatePseudoLRU8Way handles 8-way associative PseudoLRU
+func (d *DirectoryImpl) updatePseudoLRU8Way(set *Set, wayID int) {
+	// 8-way PseudoLRU tree: 7 bits
+	//        bit0
+	//      /      \
+	//    bit1     bit2
+	//   /   \    /    \
+	// bit3 bit4 bit5 bit6
+	// /|   |\ /|   |\
+	//W0W1 W2W3W4W5 W6W7
+
+	if wayID < 4 {
+		set.PseudoLRUBits &= ^uint64(1) // Clear bit 0 (left subtree)
+		if wayID < 2 {
+			set.PseudoLRUBits &= ^uint64(1 << 1) // Clear bit 1
+			if wayID == 0 {
+				set.PseudoLRUBits |= (1 << 3) // Set bit 3
+			} else {
+				set.PseudoLRUBits &= ^uint64(1 << 3) // Clear bit 3
+			}
+		} else {
+			set.PseudoLRUBits |= (1 << 1) // Set bit 1
+			if wayID == 2 {
+				set.PseudoLRUBits |= (1 << 4) // Set bit 4
+			} else {
+				set.PseudoLRUBits &= ^uint64(1 << 4) // Clear bit 4
+			}
+		}
+	} else {
+		set.PseudoLRUBits |= 1 // Set bit 0 (right subtree)
+		if wayID < 6 {
+			set.PseudoLRUBits &= ^uint64(1 << 2) // Clear bit 2
+			if wayID == 4 {
+				set.PseudoLRUBits |= (1 << 5) // Set bit 5
+			} else {
+				set.PseudoLRUBits &= ^uint64(1 << 5) // Clear bit 5
+			}
+		} else {
+			set.PseudoLRUBits |= (1 << 2) // Set bit 2
+			if wayID == 6 {
+				set.PseudoLRUBits |= (1 << 6) // Set bit 6
+			} else {
+				set.PseudoLRUBits &= ^uint64(1 << 6) // Clear bit 6
+			}
 		}
 	}
-
-	set.LRUQueue = append(set.LRUQueue, block)
 }
 
 // GetSets returns all the sets in a directory
@@ -156,7 +244,7 @@ func (d *DirectoryImpl) Reset() {
 			block.WayID = j
 			block.CacheAddress = uint64(i*d.NumWays+j) * uint64(d.BlockSize)
 			d.Sets[i].Blocks = append(d.Sets[i].Blocks, block)
-			d.Sets[i].LRUQueue = append(d.Sets[i].LRUQueue, block)
+			// LRU queue initialization removed for performance
 		}
 	}
 }

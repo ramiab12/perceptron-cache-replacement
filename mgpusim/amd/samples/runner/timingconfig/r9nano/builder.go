@@ -485,7 +485,7 @@ func (b *Builder) buildL2Caches() {
 		WithNumReqPerCycle(16).
 		WithPerceptronVictimFinder()
 
-	fmt.Printf("[L2CACHE] Building L2 cache with PerceptronVictimFinder enabled\n")
+		// Removed logging for performance
 
 	for i := 0; i < b.numMemoryBank; i++ {
 		cacheName := fmt.Sprintf("%s.L2Cache[%d]", b.name, i)
