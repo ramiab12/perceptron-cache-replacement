@@ -89,7 +89,7 @@ if [ -d "mgpusim_original" ]; then
     cd ..
 else
     print_status "Cloning MGPUSim repository..."
-    git clone https://github.com/akita/mgpusim.git mgpusim_original
+    git clone https://github.com/sarchlab/mgpusim.git mgpusim_original
     print_success "MGPUSim cloned successfully"
 fi
 
