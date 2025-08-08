@@ -78,8 +78,8 @@ else
     print_success "GCC found"
 fi
 
-# Step 2: Clone MGPUSim if not already present
-print_status "Setting up MGPUSim..."
+# Step 2: Clone MGPUSim for LRU baseline
+print_status "Setting up MGPUSim for LRU baseline..."
 
 if [ -d "mgpusim_original" ]; then
     print_warning "mgpusim_original directory already exists. Updating..."
@@ -88,29 +88,37 @@ if [ -d "mgpusim_original" ]; then
     git reset --hard origin/main
     cd ..
 else
-    print_status "Cloning MGPUSim repository..."
+    print_status "Cloning MGPUSim repository for LRU baseline..."
     git clone https://github.com/sarchlab/mgpusim.git mgpusim_original
-    print_success "MGPUSim cloned successfully"
+    print_success "MGPUSim cloned successfully for LRU baseline"
 fi
 
-# Step 3: Copy our modified files to MGPUSim
-print_status "Copying perceptron implementation to MGPUSim..."
+# Step 2b: Set up modified MGPUSim for perceptron
+print_status "Setting up modified MGPUSim for perceptron..."
 
-# Create the akita directory structure if it doesn't exist
-mkdir -p mgpusim_original/akita/mem/cache
-
-# Create backup of original file if it exists
-if [ -f "mgpusim_original/akita/mem/cache/perceptron_victimfinder.go" ]; then
-    cp mgpusim_original/akita/mem/cache/perceptron_victimfinder.go mgpusim_original/akita/mem/cache/perceptron_victimfinder.go.backup
+if [ -d "mgpusim" ]; then
+    print_warning "mgpusim directory already exists. Updating..."
+    cd mgpusim
+    git fetch origin
+    git reset --hard origin/main
+    cd ..
+else
+    print_status "Cloning MGPUSim repository for perceptron version..."
+    git clone https://github.com/sarchlab/mgpusim.git mgpusim
+    print_success "MGPUSim cloned successfully for perceptron version"
 fi
 
-# Copy our implementation
-cp akita/mem/cache/perceptron_victimfinder.go mgpusim_original/akita/mem/cache/
+# Step 3: Integrate perceptron into modified MGPUSim
+print_status "Integrating perceptron implementation into modified MGPUSim..."
 
-print_success "Perceptron implementation copied to MGPUSim"
+# Copy our perceptron implementation to the modified MGPUSim
+mkdir -p mgpusim/akita/mem/cache
+cp akita/mem/cache/perceptron_victimfinder.go mgpusim/akita/mem/cache/
 
-# Step 4: Build MGPUSim
-print_status "Building MGPUSim..."
+print_success "Perceptron implementation integrated into modified MGPUSim"
+
+# Step 4: Build both MGPUSim versions
+print_status "Building original MGPUSim (LRU baseline)..."
 
 cd mgpusim_original
 
@@ -125,13 +133,40 @@ print_status "Downloading Go dependencies..."
 go mod tidy
 
 # Build the project
-print_status "Building MGPUSim (this may take a few minutes)..."
+print_status "Building original MGPUSim (this may take a few minutes)..."
 make
 
 if [ $? -eq 0 ]; then
-    print_success "MGPUSim built successfully"
+    print_success "Original MGPUSim built successfully"
 else
-    print_error "Failed to build MGPUSim. Please check the error messages above."
+    print_error "Failed to build original MGPUSim. Please check the error messages above."
+    exit 1
+fi
+
+cd ..
+
+print_status "Building modified MGPUSim (with perceptron)..."
+
+cd mgpusim
+
+# Check if Go modules are initialized
+if [ ! -f "go.mod" ]; then
+    print_status "Initializing Go modules..."
+    go mod init mgpusim
+fi
+
+# Get dependencies
+print_status "Downloading Go dependencies..."
+go mod tidy
+
+# Build the project
+print_status "Building modified MGPUSim (this may take a few minutes)..."
+make
+
+if [ $? -eq 0 ]; then
+    print_success "Modified MGPUSim built successfully"
+else
+    print_error "Failed to build modified MGPUSim. Please check the error messages above."
     exit 1
 fi
 
@@ -177,13 +212,14 @@ print_success "Binaries copied to scripts/bin/"
 # Step 7: Update test scripts to use relative paths
 print_status "Updating test scripts to use relative paths..."
 
-# Update all test scripts to use relative paths instead of hardcoded /home/rami/mgpusim_original
+# Update all test scripts to use relative paths instead of hardcoded paths
 for script in scripts/*_comprehensive_test.sh; do
     if [ -f "$script" ]; then
         print_status "Updating $script..."
         # Replace hardcoded paths with relative paths
         sed -i 's|/home/rami/mgpusim_original|../mgpusim_original|g' "$script"
         sed -i 's|\$HOME/mgpusim_original|../mgpusim_original|g' "$script"
+        sed -i 's|/home/rami/perceptron_research/mgpusim|../mgpusim|g' "$script"
     fi
 done
 
