@@ -96,6 +96,9 @@ fi
 # Step 3: Copy our modified files to MGPUSim
 print_status "Copying perceptron implementation to MGPUSim..."
 
+# Create the akita directory structure if it doesn't exist
+mkdir -p mgpusim_original/akita/mem/cache
+
 # Create backup of original file if it exists
 if [ -f "mgpusim_original/akita/mem/cache/perceptron_victimfinder.go" ]; then
     cp mgpusim_original/akita/mem/cache/perceptron_victimfinder.go mgpusim_original/akita/mem/cache/perceptron_victimfinder.go.backup
