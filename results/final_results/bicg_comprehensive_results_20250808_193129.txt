@@ -1,0 +1,74 @@
+BiCG Comprehensive Perceptron vs LRU Test Results
+=================================================
+Test started: Fri 08 Aug 2025 07:31:29 PM IDT
+Configuration:
+- Sizes (x=y): 256 272 288 304 320 336 352
+- Timeout: 1200s
+
+Format: Size | Policy | Hits | Misses | Hit-Rate | Total-Time | Avg-Latency | Miss-Reduction | Latency-Improvement
+=================================================================================================================
+
+
+256x256 Results (Fri 08 Aug 2025 07:31:56 PM IDT):
+----------------------------------
+Perceptron | 71203 | 6455 | 91.68% | 0.002239702s | 2.1274085762805e-08s
+LRU        | 66374 | 12525 | 84.12% | 0.001253134s | 2.82304652969347e-08s
+Improvements: Miss reduction: 48.46%, Latency improvement: 24.46%
+
+   🎉 EXCELLENT: >10% miss reduction!
+   🚀 SPEEDY: >5% latency improvement!
+
+272x272 Results (Fri 08 Aug 2025 07:32:22 PM IDT):
+----------------------------------
+Perceptron | 72295 | 5989 | 92.34% | 0.000446384s | 2.10048139310324e-08s
+LRU        | 12303 | 7325 | 62.68% | 0.00078713s | 6.40717259471757e-08s
+Improvements: Miss reduction: 18.23%, Latency improvement: 67.23%
+
+   🎉 EXCELLENT: >10% miss reduction!
+   🚀 SPEEDY: >5% latency improvement!
+
+288x288 Results (Fri 08 Aug 2025 07:32:56 PM IDT):
+----------------------------------
+Perceptron | 80407 | 7286 | 91.69% | 0.000513582s | 2.1687949122092e-08s
+LRU        | 82373 | 7853 | 91.29% | 0.000432426s | 2.21069575575841e-08s
+Improvements: Miss reduction: 7.22%, Latency improvement: 1.80%
+
+   🔥 GREAT: >5% miss reduction!
+
+304x304 Results (Fri 08 Aug 2025 07:33:26 PM IDT):
+----------------------------------
+Perceptron | 80658 | 8879 | 90.08% | 0.000500052s | 2.33594306686573e-08s
+LRU        | 15601 | 8767 | 64.02% | 0.000878666s | 6.00429882847645e-08s
+Improvements: Miss reduction: -1.27%, Latency improvement: 61.00%
+
+   🚀 SPEEDY: >5% latency improvement!
+
+320x320 Results (Fri 08 Aug 2025 07:34:05 PM IDT):
+----------------------------------
+Perceptron | 102997 | 10597 | 90.67% | 0.000752068s | 2.27499273996047e-08s
+LRU        | 94490 | 10797 | 89.74% | 0.000514306s | 2.37756008879915e-08s
+Improvements: Miss reduction: 1.85%, Latency improvement: 4.62%
+
+
+336x336 Results (Fri 08 Aug 2025 07:34:40 PM IDT):
+----------------------------------
+Perceptron | 90755 | 12300 | 88.06% | 0.000547578s | 2.54684488569208e-08s
+LRU        | 17702 | 11921 | 59.75% | 0.00096982s | 6.35810189416598e-08s
+Improvements: Miss reduction: -3.17%, Latency improvement: 59.90%
+
+   🚀 SPEEDY: >5% latency improvement!
+
+352x352 Results (Fri 08 Aug 2025 07:35:26 PM IDT):
+----------------------------------
+Perceptron | 128079 | 13892 | 90.21% | 0.000630486s | 2.31858808471122e-08s
+LRU        | 101754 | 13980 | 87.92% | 0.00052889s | 2.56425642132668e-08s
+Improvements: Miss reduction: .62%, Latency improvement: 9.37%
+
+   🚀 SPEEDY: >5% latency improvement!
+
+=====================================================================================================
+Test completed: Fri 08 Aug 2025 07:35:26 PM IDT
+Total tests run: 7 sizes
+Results file: /home/rami/perceptron_research/results/bicg_comprehensive_results_20250808_193129.txt
+
+🔍 To view full results: cat /home/rami/perceptron_research/results/bicg_comprehensive_results_20250808_193129.txt

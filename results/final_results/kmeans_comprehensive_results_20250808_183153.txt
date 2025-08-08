@@ -1,0 +1,82 @@
+KMeans Comprehensive Perceptron vs LRU Test Results
+===================================================
+Test started: Fri 08 Aug 2025 06:31:53 PM IDT
+Configuration:
+- Points: 1024
+- Features: 64 72 80 88 96 104 112 120 128
+- Clusters: 16, Max-Iter: 5
+- Timeout: 1200s
+
+Format: Points x Features | Policy | Hits | Misses | Hit-Rate | Total-Time | Avg-Latency | Miss-Reduction | Latency-Improvement
+=============================================================================================================================
+
+
+points=1024, features=64 Results (Fri 08 Aug 2025 06:34:34 PM IDT):
+------------------------------------------------------
+Perceptron | 294964 | 31613 | 90.31% | 0.001934122s | 2.21203533626427e-08s
+LRU        | 302364 | 34558 | 89.74% | 0.001856662s | 2.26620908127769e-08s
+Improvements: Miss reduction: 8.52%, Latency improvement: 2.64%
+
+   🔥 GREAT: >5% miss reduction!
+
+points=1024, features=72 Results (Fri 08 Aug 2025 06:37:31 PM IDT):
+------------------------------------------------------
+Perceptron | 24116 | 344358 | 6.54% | 0.00324987s | 1.09388556987301e-07s
+LRU        | 0 | 378906 | 0% | 0.00317835s | 1.16236817371072e-07s
+Improvements: Miss reduction: 9.11%, Latency improvement: 5.85%
+
+   🔥 GREAT: >5% miss reduction!
+   🚀 SPEEDY: >5% latency improvement!
+
+points=1024, features=80 Results (Fri 08 Aug 2025 06:40:37 PM IDT):
+------------------------------------------------------
+Perceptron | 24658 | 385854 | 6.00% | 0.00360823s | 1.09938187313819e-07s
+LRU        | 0 | 420610 | 0% | 0.003526022s | 1.16232725679267e-07s
+Improvements: Miss reduction: 8.26%, Latency improvement: 5.42%
+
+   🔥 GREAT: >5% miss reduction!
+   🚀 SPEEDY: >5% latency improvement!
+
+points=1024, features=88 Results (Fri 08 Aug 2025 06:44:05 PM IDT):
+------------------------------------------------------
+Perceptron | 13818 | 438723 | 3.05% | 0.003983354s | 1.13080820315894e-07s
+LRU        | 0 | 463146 | 0% | 0.00387543s | 1.16287214361051e-07s
+Improvements: Miss reduction: 5.27%, Latency improvement: 2.75%
+
+   🔥 GREAT: >5% miss reduction!
+
+points=1024, features=96 Results (Fri 08 Aug 2025 06:47:48 PM IDT):
+------------------------------------------------------
+Perceptron | 14803 | 479795 | 2.99% | 0.004326488s | 1.13125503734671e-07s
+LRU        | 0 | 504658 | 0% | 0.004222286s | 1.16257657286736e-07s
+Improvements: Miss reduction: 4.92%, Latency improvement: 2.75%
+
+
+points=1024, features=104 Results (Fri 08 Aug 2025 06:51:45 PM IDT):
+------------------------------------------------------
+Perceptron | 3900 | 532542 | .72% | 0.004710546s | 1.15524356632203e-07s
+LRU        | 0 | 547194 | 0% | 0.004571856s | 1.16298870984163e-07s
+Improvements: Miss reduction: 2.67%, Latency improvement: .68%
+
+
+points=1024, features=120 Results (Fri 08 Aug 2025 07:00:32 PM IDT):
+------------------------------------------------------
+Perceptron | 4300 | 616198 | .69% | 0.005432872s | 1.15555026695349e-07s
+LRU        | 0 | 631242 | 0% | 0.005268272s | 1.16309218355973e-07s
+Improvements: Miss reduction: 2.38%, Latency improvement: .60%
+
+
+points=1024, features=128 Results (Fri 08 Aug 2025 07:05:39 PM IDT):
+------------------------------------------------------
+Perceptron | 32438 | 725473 | 4.27% | 0.00584325s | 1.13497546744434e-07s
+LRU        | 0 | 795634 | 0% | 0.005676392s | 1.17410533183387e-07s
+Improvements: Miss reduction: 8.81%, Latency improvement: 3.32%
+
+   🔥 GREAT: >5% miss reduction!
+
+=====================================================================================================
+Test completed: Fri 08 Aug 2025 07:05:39 PM IDT
+Total tests run: 9 combinations
+Results file: /home/rami/perceptron_research/results/kmeans_comprehensive_results_20250808_183153.txt
+
+🔍 To view full results: cat /home/rami/perceptron_research/results/kmeans_comprehensive_results_20250808_183153.txt

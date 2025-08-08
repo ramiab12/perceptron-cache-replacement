@@ -1,0 +1,84 @@
+SPMV Comprehensive Perceptron vs LRU Test Results
+================================================
+Test started: Thu 07 Aug 2025 08:04:56 PM IDT
+Configuration:
+- Matrix sizes: 1024 2048 3072 4096 5120 6144 7168 8192
+- Sparsity: 0.01
+- Fixed seed: 12345
+- Timeout: 900s
+
+Format: Size | Policy | Hits | Misses | Hit-Rate | Total-Time | Avg-Latency | Miss-Reduction | Latency-Improvement
+==================================================================================================================
+
+
+1024x1024 Matrix Results (Thu 07 Aug 2025 08:05:00 PM IDT):
+------------------------------------------
+Perceptron | 2095 | 1514 | 58.04% | 3.7829e-05s | 5.62220075945523e-08s
+LRU        | 4057 | 1514 | 72.82% | 3.5253e-05s | 4.1533727690368e-08s
+Improvements: Miss reduction: 0%, Latency improvement: -35.42%
+
+
+2048x2048 Matrix Results (Thu 07 Aug 2025 08:05:22 PM IDT):
+------------------------------------------
+Perceptron | 35691 | 12704 | 73.74% | 7.0425e-05s | 4.03445662347247e-08s
+LRU        | 57363 | 13128 | 81.37% | 6.1621e-05s | 3.2289944965183e-08s
+Improvements: Miss reduction: 3.22%, Latency improvement: -24.76%
+
+
+3072x3072 Matrix Results (Thu 07 Aug 2025 08:06:19 PM IDT):
+------------------------------------------
+Perceptron | 67334 | 69413 | 49.23% | 0.000127875s | 6.57533037180931e-08s
+LRU        | 63761 | 107966 | 37.12% | 0.000126031s | 7.83661926944797e-08s
+Improvements: Miss reduction: 35.70%, Latency improvement: 16.07%
+
+   🎉 EXCELLENT: >10% miss reduction!
+   🚀 SPEEDY: >5% latency improvement!
+
+4096x4096 Matrix Results (Thu 07 Aug 2025 08:08:07 PM IDT):
+------------------------------------------
+Perceptron | 86846 | 182680 | 32.22% | 0.000187913s | 8.333428940665e-08s
+LRU        | 64855 | 243150 | 21.05% | 0.000184929s | 9.43322691695224e-08s
+Improvements: Miss reduction: 24.86%, Latency improvement: 11.66%
+
+   🎉 EXCELLENT: >10% miss reduction!
+   🚀 SPEEDY: >5% latency improvement!
+
+5120x5120 Matrix Results (Thu 07 Aug 2025 08:11:01 PM IDT):
+------------------------------------------
+Perceptron | 112080 | 338091 | 24.89% | 0.000253393s | 9.08363886780332e-08s
+LRU        | 84131 | 403927 | 17.23% | 0.000237445s | 9.78625604013e-08s
+Improvements: Miss reduction: 16.29%, Latency improvement: 7.25%
+
+   🎉 EXCELLENT: >10% miss reduction!
+   🚀 SPEEDY: >5% latency improvement!
+
+6144x6144 Matrix Results (Thu 07 Aug 2025 08:15:18 PM IDT):
+------------------------------------------
+Perceptron | 145691 | 528514 | 21.60% | 0.000316423s | 9.40130952064315e-08s
+LRU        | 124385 | 592572 | 17.34% | 0.000289515s | 9.80604384855378e-08s
+Improvements: Miss reduction: 10.81%, Latency improvement: 4.17%
+
+   🎉 EXCELLENT: >10% miss reduction!
+
+7168x7168 Matrix Results (Thu 07 Aug 2025 08:21:13 PM IDT):
+------------------------------------------
+Perceptron | 200498 | 749888 | 21.09% | 0.000377215s | 9.46654166326367e-08s
+LRU        | 181604 | 818985 | 18.14% | 0.000341253s | 9.79695777283467e-08s
+Improvements: Miss reduction: 8.43%, Latency improvement: 3.36%
+
+   🔥 GREAT: >5% miss reduction!
+
+8192x8192 Matrix Results (Thu 07 Aug 2025 08:29:04 PM IDT):
+------------------------------------------
+Perceptron | 257947 | 1009558 | 20.35% | 0.000434613s | 9.53421973458338e-08s
+LRU        | 259294 | 1076417 | 19.41% | 0.000395433s | 9.78319674014706e-08s
+Improvements: Miss reduction: 6.21%, Latency improvement: 2.55%
+
+   🔥 GREAT: >5% miss reduction!
+
+=====================================================================================================
+Test completed: Thu 07 Aug 2025 08:29:04 PM IDT
+Total tests run: 8 matrix sizes
+Results file: /home/rami/perceptron_research/results/spmv_comprehensive_results_20250807_200456.txt
+
+🔍 To view full results: cat /home/rami/perceptron_research/results/spmv_comprehensive_results_20250807_200456.txt
