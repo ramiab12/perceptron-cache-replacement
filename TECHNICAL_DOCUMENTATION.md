@@ -168,24 +168,23 @@ features[0] = (addr >> 6) & 0x3F;   // Shifted to account for cache line size
 
 ```go
 type PerceptronVictimFinder struct {
-    // Core perceptron components
-    featureTables    [6][]int32    // 6 feature tables, 256 entries each
-    threshold        int32         // τ = 3 (prediction threshold)
-    theta           int32          // θ = 68 (training threshold)
-    learningRate    int32          // Learning rate (originally 1, optimized to 2)
-    
-    // Optimization parameters
-    samplingRatio   int32          // 50 (2% of sets use perceptron)
-    trainingSampleCounter uint64   // Counter for training sampling
+    // Core perceptron components (simplified from 6 tables to 32 weights)
+    weights         [32]int32     // 32 weights, 6-bit signed (-32 to +31)
+    threshold       int32         // τ = 0 (prediction threshold)
+    theta          int32          // θ = 32 (training threshold for confidence)
+    learningRate   int32          // Learning rate = 2
     
     // Performance optimization
-    lastPredictionAddr uint64      // Cache last prediction address
-    lastPredictionSum  int32       // Cache last prediction sum
+    trainingSampleCounter uint64  // Counter for training sampling (20%)
+    lastPredictionAddr uint64     // Cache last prediction address
+    lastPredictionSum  int32      // Cache last prediction sum
     
     // Statistics and debugging
-    totalPredictions uint64        // Total predictions made
-    totalTrainingUpdates uint64    // Total weight updates
-    correctPredictions uint64      // Correct predictions count
+    totalPredictions   int64      // Total predictions made
+    correctPredictions int64      // Correct predictions count
+    
+    // Pre-allocated feature buffer to avoid allocations
+    featureBuffer [6]uint32       // Reused feature extraction buffer
 }
 ```
 
@@ -406,6 +405,35 @@ p.lastPredictionSum = sum
 ```
 
 **Purpose**: Avoid duplicate `calculatePredictionSum` calls between prediction and training phases.
+
+#### 3.5.4 Confidence-Based PseudoLRU Fallback
+
+```go
+func (p *PerceptronVictimFinder) selectVictim(set *Set, predictNoReuse bool, predictionSum int32) *Block {
+    // Check prediction confidence using theta threshold
+    isConfident := abs(predictionSum) >= p.theta
+    
+    if isConfident {
+        // HIGH CONFIDENCE: Use perceptron prediction
+        if predictNoReuse {
+            // Find any unlocked block to evict
+            for _, block := range set.Blocks {
+                if !block.IsLocked {
+                    return block
+                }
+            }
+        } else {
+            // Use PseudoLRU to preserve locality
+            return p.findPseudoLRUVictim(set)
+        }
+    } else {
+        // LOW CONFIDENCE: Fall back to PseudoLRU baseline
+        return p.findPseudoLRUVictim(set)
+    }
+}
+```
+
+**Purpose**: When perceptron confidence is low (|sum| < θ), fall back to proven PseudoLRU policy to avoid incorrect decisions.
 
 ---
 
@@ -772,21 +800,20 @@ func (p *PerceptronVictimFinder) shouldUsePerceptron(set *Set) bool {
 }
 ```
 
-**Problem**: High computational overhead on every cache access.
-
-**Evolution**:
+**Experimentation**: Tried various sampling ratios to reduce overhead:
 1. **12.5% sampling** (`samplingRatio = 8`)
 2. **4% sampling** (`samplingRatio = 25`) 
 3. **1% sampling** (`samplingRatio = 100`)
-4. **2% sampling** (`samplingRatio = 50`) - Final optimized value
 
-**Final Implementation**:
+**Final Decision**: **Reverted to 100% coverage** for accurate measurement
 ```go
-func (p *PerceptronVictimFinder) shouldUsePerceptron(set *Set) bool {
-    setAddr := uintptr(unsafe.Pointer(set))
-    return (setAddr/64)%uint64(p.samplingRatio) == 0
+func (p *PerceptronVictimFinder) shouldUsePerceptron(setID int) bool {
+    // Use perceptron on ALL sets for accurate measurement
+    return true
 }
 ```
+
+**Rationale**: Set sampling reduced learning effectiveness. Instead, we use **confidence-based fallback** to PseudoLRU when perceptron is uncertain.
 
 #### 5.2.2 Training Sampling
 
@@ -850,13 +877,13 @@ func (p *PerceptronVictimFinder) updateWeightsBits(features [6]uint32, addr uint
 
 **Lesson**: Simple, clear code often outperforms "clever" optimizations, especially when the compiler can optimize the simple version effectively.
 
-#### 5.4.2 Aggressive Sampling (1%)
+#### 5.4.2 Aggressive Set Sampling (1%)
 
 **Attempted**: Reduce set sampling to 1% (`samplingRatio = 100`)
 
 **Result**: Too aggressive - perceptron didn't see enough accesses to learn effectively.
 
-**Optimal**: 2% sampling (`samplingRatio = 50`) provided the best balance of performance and learning effectiveness.
+**Final Decision**: **Removed set sampling entirely** and instead use **confidence-based fallback** to PseudoLRU when perceptron prediction confidence is low (|sum| < θ).
 
 ---
 

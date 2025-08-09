@@ -150,10 +150,10 @@ MATRIX_SIZES=(1024 2048 4096)  # Edit in script files
 4. **Parameter Tuning**: Optimized learning rate and thresholds
 
 ### Key Optimizations Applied
-- **Set Sampling**: Apply perceptron to 2% of cache sets (samplingRatio=50)
+- **No Set Sampling**: Apply perceptron to 100% of cache sets for accurate measurement
 - **Training Sampling**: Update weights in 20% of accesses (trainingSampleCounter%5==0)
 - **Direct Training**: Immediate weight updates without intermediate caching
-- **Confidence Threshold**: Fall back to PseudoLRU when perceptron confidence is low
+- **Confidence Threshold**: Fall back to PseudoLRU when perceptron confidence is low (|sum| < θ)
 
 ## 🔧 Development & Contributing
 
