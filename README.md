@@ -41,20 +41,29 @@ Improvements: Miss reduction: 20.9%, Latency improvement: 8.7%
 
 ## 🏗️ Architecture Innovation
 
-### Address-as-PC-Proxy Technique
-Since GPUs don't provide direct Program Counter (PC) access like CPUs, we developed a novel **address-as-PC-proxy** approach:
+### Direct Bit-Based Prediction Technique
+Since GPUs don't provide direct Program Counter (PC) access like CPUs, we developed a **direct bit-based prediction** approach:
 
 ```go
-// Extract 6 features from memory address bits
-func (p *PerceptronVictimFinder) extractFeatures(context *VictimContext) [6]uint32 {
-    addr := context.Address
-    features[0] = uint32((addr >> 6) & 0x3F)   // Address bits 6-11
-    features[1] = uint32((addr >> 7) & 0x3F)   // Address bits 7-12  
-    features[2] = uint32((addr >> 8) & 0x3F)   // Address bits 8-13
-    features[3] = uint32((addr >> 9) & 0x3F)   // Address bits 9-14
-    features[4] = uint32((addr >> 12) & 0x3F)  // Tag bits 12-17
-    features[5] = uint32((addr >> 15) & 0x3F)  // Page bits 15-20
-    return features
+// Use address bits directly as perceptron inputs
+func (p *PerceptronVictimFinder) calculatePredictionSum(addr uint64) int32 {
+    sum := int32(0)
+    
+    // Use direct PC bits (16 bits from address)
+    for i := 0; i < 16; i++ {
+        if (addr>>uint(i))&1 == 1 {
+            sum += p.weights[i]
+        }
+    }
+    
+    // Use tag bits (16 bits from higher address bits)
+    for i := 0; i < 16; i++ {
+        if (addr>>uint(i+16))&1 == 1 {
+            sum += p.weights[i+16]
+        }
+    }
+    
+    return sum
 }
 ```
 
@@ -62,11 +71,11 @@ func (p *PerceptronVictimFinder) extractFeatures(context *VictimContext) [6]uint
 
 ```go
 type PerceptronVictimFinder struct {
-    featureTables    [6][]int32  // 6 tables × 256 entries each
-    threshold        int32       // τ = 3 (prediction threshold)
-    theta           int32        // θ = 68 (training threshold)  
-    learningRate    int32        // Learning rate = 2
-    samplingRatio   int32        // 50 (2% sampling)
+    weights         [32]int32    // 32 weights, 6-bit signed (-32 to +31)
+    threshold       int32        // τ = 0 (prediction threshold)
+    theta          int32         // θ = 32 (training/confidence threshold)  
+    learningRate   int32         // Learning rate = 2
+    // No sampling - applies to 100% of cache sets
 }
 ```
 
@@ -151,9 +160,9 @@ MATRIX_SIZES=(1024 2048 4096)  # Edit in script files
 
 ### Key Optimizations Applied
 - **No Set Sampling**: Apply perceptron to 100% of cache sets for accurate measurement
-- **Training Sampling**: Update weights in 20% of accesses (trainingSampleCounter%5==0)
+- **Training Sampling**: Update weights in 20% of accesses (every 5th access)
 - **Direct Training**: Immediate weight updates without intermediate caching
-- **Confidence Threshold**: Fall back to PseudoLRU when perceptron confidence is low (|sum| < θ)
+- **Confidence Threshold**: Fall back to PseudoLRU when perceptron confidence is low (|sum| < θ=32)
 
 ## 🔧 Development & Contributing
 

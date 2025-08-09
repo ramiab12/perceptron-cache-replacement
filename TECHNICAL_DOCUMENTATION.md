@@ -201,119 +201,65 @@ type VictimContext struct {
 
 **Purpose**: Provides rich context information to the perceptron that wasn't available in the original VictimFinder interface.
 
-### 3.2 Feature Extraction Implementation
+### 3.2 Direct Bit-Based Prediction Implementation
 
-#### 3.2.1 extractFeatures Function
-
-```go
-func (p *PerceptronVictimFinder) extractFeatures(context *VictimContext) [6]uint32 {
-    addr := context.Address
-    var features [6]uint32
-    
-    // Feature 1: Address bits 6-11 (cache line patterns)
-    features[0] = uint32((addr >> 6) & 0x3F)
-    
-    // Feature 2: Address bits 7-12 (small stride patterns)  
-    features[1] = uint32((addr >> 7) & 0x3F)
-    
-    // Feature 3: Address bits 8-13 (medium stride patterns)
-    features[2] = uint32((addr >> 8) & 0x3F)
-    
-    // Feature 4: Address bits 9-14 (large stride patterns)
-    features[3] = uint32((addr >> 9) & 0x3F)
-    
-    // Feature 5: Address bits 12-17 (tag patterns)
-    features[4] = uint32((addr >> 12) & 0x3F)
-    
-    // Feature 6: Address bits 15-20 (page patterns)
-    features[5] = uint32((addr >> 15) & 0x3F)
-    
-    return features
-}
-```
-
-**Design Rationale**:
-1. **Progressive Bit Shifting**: Captures patterns at different granularities
-2. **6-bit Masks (0x3F)**: Matches original paper's feature size
-3. **Cache-Aware Offsets**: Bit 6 corresponds to 64-byte cache line boundary
-4. **Hierarchical Patterns**: From cache line to page level
-
-#### 3.2.2 Hash Function Implementation
+#### 3.2.1 calculatePredictionSum Function
 
 ```go
-func hash32(value uint64) uint32 {
-    // Knuth's multiplicative hash (same as original paper)
-    return uint32((value * 2654435761) >> 32)
-}
-```
-
-#### 3.2.3 Table Indexing
-
-```go
-func (p *PerceptronVictimFinder) getTableIndex(feature uint32, addr uint64) uint32 {
-    // Hash the feature to 8 bits
-    hashedFeature := hash32(uint64(feature)) & 0xFF
+func (p *PerceptronVictimFinder) calculatePredictionSum(addr uint64) int32 {
+    sum := int32(0)
     
-    // XOR with lower 8 bits of address (replaces PC in original)
-    addrBits := uint32(addr & 0xFF)
+    // Use direct PC bits (16 bits from address)
+    for i := 0; i < 16; i++ {
+        if (addr>>uint(i))&1 == 1 {
+            sum += p.weights[i]
+        }
+    }
     
-    // Return index in range [0, 255]
-    return (hashedFeature ^ addrBits) % 256
-}
-```
-
-**Key Adaptation**: Uses `addr & 0xFF` instead of `pc & 0xFF` from the original paper.
-
-### 3.3 Prediction Algorithm
-
-#### 3.3.1 calculatePredictionSum Function
-
-```go
-func (p *PerceptronVictimFinder) calculatePredictionSum(features [6]uint32, addr uint64) int32 {
-    var sum int32 = 0
-    
-    for i := 0; i < 6; i++ {
-        tableIndex := p.getTableIndex(features[i], addr)
-        sum += p.featureTables[i][tableIndex]
+    // Use tag bits (16 bits from higher address bits)
+    for i := 0; i < 16; i++ {
+        if (addr>>uint(i+16))&1 == 1 {
+            sum += p.weights[i+16]
+        }
     }
     
     return sum
 }
 ```
 
-#### 3.3.2 Main Prediction Logic
+**Design Approach**:
+1. **Direct Bit Checking**: Examines each bit of the address directly
+2. **32 Weight Array**: Uses 32 weights total (16 for low bits + 16 for high bits)
+3. **Simple Summation**: Adds weight if corresponding address bit is set
+4. **No Feature Tables**: Simplified from original paper's 6-table approach
+
+**Note**: The code contains an unused `extractFeatures()` function with 6-feature extraction, but the actual implementation uses this direct bit-based approach.
+
+### 3.3 Prediction Algorithm
+
+#### 3.3.1 Main Prediction Logic
 
 ```go
 func (p *PerceptronVictimFinder) FindVictimWithContext(set *Set, context *VictimContext) *Block {
-    // Check if this set should use perceptron (sampling optimization)
-    if !p.shouldUsePerceptron(set) {
-        return p.findPseudoLRUVictim(set)
-    }
+    // Apply perceptron to all sets (no sampling)
     
-    // Extract features from address
-    features := p.extractFeatures(context)
+    // Calculate prediction sum using direct bit-based approach
+    sum := p.calculatePredictionSum(context.Address)
     
-    // Calculate prediction sum
-    sum := p.calculatePredictionSum(features, context.Address)
-    
-    // Cache for potential training use
+    // Cache prediction for training optimization
     p.lastPredictionAddr = context.Address
     p.lastPredictionSum = sum
     
     // Make prediction: sum >= threshold means "predict no reuse"
     predictNoReuse := sum >= p.threshold
     
+    // Select victim using hybrid approach with confidence threshold
+    victim := p.selectVictim(set, predictNoReuse, sum)
+    
     // Update statistics
     p.totalPredictions++
     
-    // Select victim based on prediction
-    if predictNoReuse {
-        // Predict no reuse - select LRU block for eviction
-        return p.findLRUVictim(set)
-    } else {
-        // Predict reuse - select non-LRU block (preserve LRU)
-        return p.findNonLRUVictim(set)
-    }
+    return victim
 }
 ```
 
@@ -331,43 +277,54 @@ func (p *PerceptronVictimFinder) shouldTrain() bool {
 #### 3.4.2 Training Logic
 
 ```go
-func (p *PerceptronVictimFinder) TrainOnEviction(addr uint64, wasReused bool) {
+func (p *PerceptronVictimFinder) TrainOnEviction(addr uint64) {
+    // Training sampling - only train 20% of the time
     if !p.shouldTrain() {
-        p.trainingSampleCounter++
         return
     }
     
-    // Use cached prediction if available
-    if addr == p.lastPredictionAddr {
-        sum := p.lastPredictionSum
-        predicted := sum >= p.threshold
-        
-        // Update weights if prediction wrong OR confidence low
-        if predicted != (!wasReused) || abs(sum) < p.theta {
-            features := p.extractFeaturesFromAddr(addr)
-            p.updateWeights(features, addr, wasReused)
-        }
+    // Use cached prediction sum if available
+    var sum int32
+    var predictNoReuse bool
+    if p.lastPredictionAddr == addr {
+        sum = p.lastPredictionSum
+        predictNoReuse = sum >= p.threshold
+    } else {
+        sum = p.calculatePredictionSum(addr)
+        predictNoReuse = sum >= p.threshold
     }
     
-    p.trainingSampleCounter++
+    // Train with actual outcome: eviction means no reuse
+    p.trainWithSum(addr, predictNoReuse, sum, false)
 }
 
-func (p *PerceptronVictimFinder) updateWeights(features [6]uint32, addr uint64, wasReused bool) {
-    for i := 0; i < 6; i++ {
-        tableIndex := p.getTableIndex(features[i], addr)
+func (p *PerceptronVictimFinder) trainWithSum(addr uint64, predictedNoReuse bool, sum int32, actualReuse bool) {
+    actualNoReuse := !actualReuse
+    
+    // Update weights if prediction wrong OR confidence low
+    if predictedNoReuse != actualNoReuse || abs(sum) < p.theta {
+        // Update weights for PC bits (16 bits from address)
+        for i := 0; i < 16; i++ {
+            if (addr>>uint(i))&1 == 1 {
+                if actualReuse {
+                    p.weights[i] = max(-32, p.weights[i]-p.learningRate)
+                } else {
+                    p.weights[i] = min(31, p.weights[i]+p.learningRate)
+                }
+            }
+        }
         
-        if wasReused {
-            // Block was reused - decrement weight (predict reuse next time)
-            newWeight := p.featureTables[i][tableIndex] - p.learningRate
-            p.featureTables[i][tableIndex] = max(-32, newWeight)
-        } else {
-            // Block was not reused - increment weight (predict no-reuse next time)
-            newWeight := p.featureTables[i][tableIndex] + p.learningRate
-            p.featureTables[i][tableIndex] = min(31, newWeight)
+        // Update weights for tag bits (16 bits from higher address bits)
+        for i := 0; i < 16; i++ {
+            if (addr>>uint(i+16))&1 == 1 {
+                if actualReuse {
+                    p.weights[i+16] = max(-32, p.weights[i+16]-p.learningRate)
+                } else {
+                    p.weights[i+16] = min(31, p.weights[i+16]+p.learningRate)
+                }
+            }
         }
     }
-    
-    p.totalTrainingUpdates++
 }
 ```
 
