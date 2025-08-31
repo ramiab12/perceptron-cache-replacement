@@ -15,14 +15,14 @@ Format: Size | Policy | Hits | Misses | Hit-Rate | Total-Time | Avg-Latency | Mi
 ------------------------------------------
 Perceptron | 2095 | 1514 | 58.04% | 3.7829e-05s | 5.62220075945523e-08s
 LRU        | 4057 | 1514 | 72.82% | 3.5253e-05s | 4.1533727690368e-08s
-Improvements: Miss reduction: 0%, Latency improvement: -35.42%
+Improvements: Miss reduction: 0%, Latency improvement: -3.42%
 
 
 2048x2048 Matrix Results (Thu 07 Aug 2025 08:05:22 PM IDT):
 ------------------------------------------
 Perceptron | 35691 | 12704 | 73.74% | 7.0425e-05s | 4.03445662347247e-08s
 LRU        | 57363 | 13128 | 81.37% | 6.1621e-05s | 3.2289944965183e-08s
-Improvements: Miss reduction: 3.22%, Latency improvement: -24.76%
+Improvements: Miss reduction: 3.22%, Latency improvement: -2.76%
 
 
 3072x3072 Matrix Results (Thu 07 Aug 2025 08:06:19 PM IDT):
