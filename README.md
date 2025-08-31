@@ -14,9 +14,6 @@ cd perceptron_research
 # Automated setup (clones MGPUSim, builds everything)
 ./setup.sh
 
-# Run a quick test
-./test_perceptron.sh
-
 # Run comprehensive performance tests
 cd scripts
 ./spmv_comprehensive_test.sh
